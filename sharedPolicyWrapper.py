@@ -2,6 +2,8 @@ import numpy as np
 import gymnasium as gym
 
 
+# Thaught i needed this to create a parallel learning network
+
 class SharedPolicyWrapper(gym.Env):
     def __init__(self, pettingzoo_env):
         super().__init__()

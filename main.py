@@ -1,139 +1,81 @@
 import torch
 import numpy as np
+import csv
 import os
-from sharedPolicyWrapper import SharedPolicyWrapper
-from intercept_env import env
-from helperScripts import ActorCritic as Policy
 
-# ---------------- CONFIG ----------------
-GOOD_MODEL_PATH = "good_policy.pt"
-ADV_MODEL_PATH = "adversary_policy.pt"
-N_ADVERSARIES = 1
-M_GOOD = 1
-WIDTH_RATIO = 5.0
-EPISODE_STEPS = 300
-RENDER = True
+from maddpg import MADDPG  # your class
 
-# ---------------- ENV SETUP ----------------
-base_env = env(N_adversaries=N_ADVERSARIES, M_good=M_GOOD, width_ratio=WIDTH_RATIO)
-wrapped_env = SharedPolicyWrapper(base_env)
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
-# Reset environment
-obs, info = wrapped_env.reset()
-print("Initial observation shape:", obs.shape)
+# --- Initialize Environment ---
+env = simple_spread_v3.parallel_env(N=3, local_ratio=0.5, max_cycles=25, continuous_actions=True)
+env.reset()
 
-# ---------------- LOAD POLICIES ----------------
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+num_agents = len(env.agents)
+obs_dims = [env.observation_space(agent).shape[0] for agent in env.agents]
+action_dims = [env.action_space(agent).shape[0] for agent in env.agents]
 
-obs_dim = wrapped_env.observation_space.shape[0]
-act_dim = wrapped_env.action_space.shape[0]
+# --- Initialize MADDPG ---
+args = dict(
+    lr_actor=1e-3,
+    lr_critic=1e-3,
+    gamma=0.95,
+    tau=0.01,
+    buffer_size=1000000,
+    batch_size=1024,
+    device=device,
+    update_every=100,
+    updates_per_step=1,
+)
 
-# Try to load good policy
-use_good_policy = False
-if os.path.exists(GOOD_MODEL_PATH):
-    try:
-        good_policy = Policy(obs_dim, act_dim).to(device)
-        good_policy.load_state_dict(torch.load(GOOD_MODEL_PATH, map_location=device))
-        good_policy.eval()
-        use_good_policy = True
-        print(f"✅ Loaded good policy: {GOOD_MODEL_PATH}")
-    except Exception as e:
-        print(f"⚠️ Failed to load good policy: {e}")
-        print("   Using random actions for good agents")
-else:
-    print(f"⚠️ Good policy not found: {GOOD_MODEL_PATH}")
-    print("   Using random actions for good agents")
+maddpg = MADDPG(n_agents=num_agents, obs_dims=obs_dims, action_dims=action_dims, args=args)
 
-# Try to load adversary policy
-use_adv_policy = False
-if os.path.exists(ADV_MODEL_PATH):
-    try:
-        adv_policy = Policy(obs_dim, act_dim).to(device)
-        adv_policy.load_state_dict(torch.load(ADV_MODEL_PATH, map_location=device))
-        adv_policy.eval()
-        use_adv_policy = True
-        print(f"✅ Loaded adversary policy: {ADV_MODEL_PATH}")
-    except Exception as e:
-        print(f"⚠️ Failed to load adversary policy: {e}")
-        print("   Using random actions for adversary agents")
-else:
-    print(f"⚠️ Adversary policy not found: {ADV_MODEL_PATH}")
-    print("   Using random actions for adversary agents")
+# --- Logging setup ---
+log_dir = "logs"
+os.makedirs(log_dir, exist_ok=True)
+csv_path = os.path.join(log_dir, "training_log.csv")
+with open(csv_path, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["episode", "total_reward", "avg_agent_reward"])
 
-# ---------------- TEST LOOP ----------------
-episode_reward_good = 0
-episode_reward_adv = 0
+# --- Training loop ---
+num_episodes = 2000
+max_steps = 25
+print_every = 100
 
-for step in range(EPISODE_STEPS):
-    # Convert observations to tensor
-    obs_tensor = torch.tensor(obs, dtype=torch.float32).to(device)
+for ep in range(1, num_episodes + 1):
+    obs, _ = env.reset()
+    maddpg.reset_noise()
+    ep_rewards = np.zeros(num_agents)
 
-    # Split observations into groups
-    good_indices = [i for i, a in enumerate(wrapped_env.agents) if "good" in a]
-    adv_indices = [i for i, a in enumerate(wrapped_env.agents) if "adversary" in a]
+    for step in range(max_steps):
+        obs_list = [obs[agent] for agent in env.agents]
+        actions = maddpg.act(obs_list, explore=True)
+        actions_dict = {agent: actions[i].astype(np.float32) for i, agent in enumerate(env.agents)}
 
-    # Get good actions
-    if use_good_policy and len(good_indices) > 0:
-        good_obs = obs_tensor[good_indices]
-        with torch.no_grad():
-            good_actions, _ = good_policy.act(good_obs)
-        good_actions = good_actions.cpu().numpy()
-    else:
-        # Random actions for good agents
-        good_actions = np.random.uniform(-1, 1, size=(len(good_indices), act_dim))
+        next_obs, rewards, terminations, truncations, infos = env.step(actions_dict)
+        dones = {agent: terminations[agent] or truncations[agent] for agent in env.agents}
+        next_obs_list = [next_obs[agent] for agent in env.agents]
+        rewards_list = [rewards.get(agent, 0) for agent in env.agents]
+        dones_list = [dones[agent] for agent in env.agents]
 
-    # Get adversary actions
-    if use_adv_policy and len(adv_indices) > 0:
-        adv_obs = obs_tensor[adv_indices]
-        with torch.no_grad():
-            adv_actions, _ = adv_policy.act(adv_obs)
-        adv_actions = adv_actions.cpu().numpy()
-    else:
-        # Random actions for adversary agents
-        adv_actions = np.random.uniform(-1, 1, size=(len(adv_indices), act_dim))
+        maddpg.step(obs_list, actions, rewards_list, next_obs_list, dones_list)
+        obs = next_obs
+        ep_rewards += np.array(rewards_list)
 
-    # Combine actions in correct agent order
-    actions = []
-    good_i, adv_i = 0, 0
-    for a in wrapped_env.agents:
-        if "good" in a:
-            actions.append(good_actions[good_i])
-            good_i += 1
-        else:
-            actions.append(adv_actions[adv_i])
-            adv_i += 1
-    actions = np.stack(actions) if actions else np.array([])
+        if all(dones_list) or env.agents:
+            break
 
-    # Step environment
-    next_obs, reward, done, infos = wrapped_env.step(actions)
+    total_reward = np.sum(ep_rewards)
+    avg_agent_reward = np.mean(ep_rewards)
 
-    # Compute separate team rewards
-    for i, a in enumerate(wrapped_env.agents):
-        if "good" in a:
-            episode_reward_good += reward[i]
-        else:
-            episode_reward_adv += reward[i]
+    # --- CSV logging ---
+    with open(csv_path, "a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([ep, total_reward, avg_agent_reward])
 
-    if RENDER:
-        base_env.render()
+    if ep % print_every == 0:
+        print(f"[Episode {ep}] Total: {total_reward:.2f}, Avg per agent: {avg_agent_reward:.2f}")
 
-    if done:
-        break
-
-    obs = next_obs
-
-print("\n✅ Testing complete")
-
-# Summary
-print("\n" + "="*50)
-print("POLICY USAGE SUMMARY")
-print("="*50)
-print(f"Good agents: {'Trained Policy' if use_good_policy else 'Random Actions'}")
-print(f"Adversary agents: {'Trained Policy' if use_adv_policy else 'Random Actions'}")
-print("="*50)
-print(f"\n{'='*50}")
-print(f"Episode finished after {step+1} steps")
-print(f"{'='*50}")
-print(f"Good team total reward: {episode_reward_good:.2f}")
-print(f"Adversary team total reward: {episode_reward_adv:.2f}")
-print(f"{'='*50}")
+print("Training finished ✅")
+env.close()

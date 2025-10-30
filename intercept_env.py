@@ -17,7 +17,6 @@ class PursuitEvasionEnv(ParallelEnv):
         self.width_ratio = width_ratio
         self.render_mode = render_mode
         self.viewer = None
-        self.dt = 1/2000
 
         # World dimensions
         self.size_x = width_ratio * 2
@@ -334,3 +333,16 @@ class PursuitEvasionEnv(ParallelEnv):
 
 def env(**kwargs):
     return PursuitEvasionEnv(**kwargs)
+
+
+if __name__ == '__main__':
+    environment = env(N_adversaries=3, M_good=5, width_ratio=3.0)
+    observations, info = environment.reset()
+
+    for step in range(200):
+        actions = {agent: environment.action_spaces[agent].sample() for agent in environment.agents}
+        obs, rewards, term, trunc, infos = environment.step(actions)
+        environment.render()
+        if not environment.agents:
+            print("Game over")
+            break
