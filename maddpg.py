@@ -65,6 +65,41 @@ def plotPrettyLog(data, window_size=20):
     plt.show(block=False)
     plt.savefig('training_reward.png')
 
+def render_static_frames(data, save_path="./Animations/testAlgo.gif"):
+    """Render all recorded positions with a fixed camera."""
+    frames = []
+    cam_range = 1  # Adjust zoom level
+
+    for record in data:
+        fig, ax = plt.subplots(figsize=(5, 5))
+        ax.set_xlim(-cam_range, cam_range)
+        ax.set_ylim(-cam_range, cam_range)
+        ax.set_aspect('equal', adjustable='box')
+        ax.axis('off')
+
+        # Plot landmarks
+        landmarks = np.array(record["landmarks"])
+        if len(landmarks) > 0:
+            ax.scatter(landmarks[:, 0], landmarks[:, 1], s=150, c="gray", label="Landmarks")
+
+        # Plot agents
+        agents = np.array(record["agents"])
+        ax.scatter(agents[:, 0], agents[:, 1], s=150, c="tab:blue", label="Agents")
+
+        # Optional: add step text
+        ax.text(-cam_range + 0.05, cam_range - 0.1, f"Step {record['step']}", fontsize=10, color='black')
+
+        # Convert to array
+        fig.canvas.draw()
+        frame = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8)
+        frame = frame.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        frames.append(frame)
+        plt.close(fig)
+
+    # Save as GIF
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    imageio.mimsave(save_path, frames, duration=0.1)
+    print(f"✅ Saved static GIF at: {save_path}")
 
 def rescale_action(action, low, high):
     # action assumed in [-1,1]
@@ -88,7 +123,6 @@ class OUNoise:
         dx = self.theta * (self.mu - x) * self.dt + self.sigma * np.sqrt(self.dt) * np.random.randn(*x.shape)
         self.state = x + dx
         return self.state
-
 
 class RunningMeanStd:
     """Keep running mean and var for normalization (Welford)."""
@@ -116,12 +150,10 @@ class RunningMeanStd:
         self.var = new_var
         self.count = tot_count
 
-
 # ------------------------ Replay Buffer ------------------------
 
 Transition = namedtuple('Transition',
                         ['obs', 'actions', 'rewards', 'next_obs', 'dones'])
-
 
 class ReplayBuffer:
     def __init__(self, buffer_size: int, batch_size: int, seed: int = 0):
@@ -141,11 +173,10 @@ class ReplayBuffer:
     def __len__(self):
         return len(self.memory)
 
-
 # ------------------------ Networks ------------------------
 
 class MLPActor(nn.Module):
-    def __init__(self, input_dim, action_dim, hidden_sizes=(256, 256), activation=F.relu, use_layernorm=False):
+    def __init__(self, input_dim, action_dim, hidden_sizes=(32, 32), activation=F.relu, use_layernorm=False):
         super().__init__()
         self.activation = activation
         sizes = [input_dim] + list(hidden_sizes)
@@ -172,9 +203,8 @@ class MLPActor(nn.Module):
         x = torch.tanh(self.out(x))
         return x
 
-
 class MLPCritic(nn.Module):
-    def __init__(self, input_dim, hidden_sizes=(512, 512), activation=F.relu, use_layernorm=False):
+    def __init__(self, input_dim, hidden_sizes=(32, 32), activation=F.relu, use_layernorm=False):
         super().__init__()
         self.activation = activation
         sizes = [input_dim] + list(hidden_sizes)
@@ -198,7 +228,6 @@ class MLPCritic(nn.Module):
             else:
                 x = layer(x)
         return self.out(x)
-
 
 # ------------------------ Agent & MADDPG ------------------------
 
@@ -228,7 +257,6 @@ class Agent:
         action = rescale_action(np.clip(action, -1.0, 1.0), 0, 1.0) #Change to be dynamic
         return action
 
-
 class MADDPG:
     def __init__(self, n_agents: int, obs_dims: List[int], action_dims: List[int], args: dict = None):
         assert len(obs_dims) == n_agents and len(action_dims) == n_agents
@@ -255,7 +283,7 @@ class MADDPG:
             device='cpu',
             ou_mu=0.0,
             ou_theta=0.15,
-            ou_sigma=0.2,
+            ou_sigma=0.1,
             clip_grad_norm=0.5,
             reward_scale=1.0,
         )
@@ -442,7 +470,7 @@ if __name__ == '__main__':
         raise ImportError("The 'some_library' is not installed. Please install it using 'pip install some_library'.")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    train, plot = True, True
+    train, plot = False, True
 
     # --- Initialize Environment ---
     env = simple_spread_v3.parallel_env(N=3, local_ratio=0.5, max_cycles=25, continuous_actions=True)
@@ -467,6 +495,7 @@ if __name__ == '__main__':
 
     maddpg = MADDPG(n_agents=num_agents, obs_dims=obs_dims, action_dims=action_dims, args=args)
     max_steps = 50
+    save_dir = "checkpoints"
 
     if train:
         # --- Logging setup ---
@@ -512,7 +541,6 @@ if __name__ == '__main__':
 
             # --- Save best model ---
             if total_reward > best_reward:
-                save_dir = "checkpoints"
                 os.makedirs(save_dir, exist_ok=True)
                 best_reward = total_reward
                 maddpg.save(save_dir)
@@ -530,6 +558,7 @@ if __name__ == '__main__':
         print("Training finished ✅")
 
     env = simple_spread_v3.parallel_env(N=3, local_ratio=0.5, max_cycles=max_steps, continuous_actions=True, render_mode="rgb_array")
+
     frames = []
     if plot:
         maddpg.load(save_dir)
@@ -537,6 +566,7 @@ if __name__ == '__main__':
             obs, _ = env.reset()
             maddpg.reset_noise()
             ep_rewards = np.zeros(num_agents)
+            data, agent_positions, landmark_positions = [], [], []
 
             for step in range(max_steps):
                 obs_list = [obs[agent] for agent in env.agents]
@@ -544,14 +574,25 @@ if __name__ == '__main__':
                 actions_dict = {agent: actions[i].astype(np.float32) for i, agent in enumerate(env.agents)}
                 next_obs, rewards, terminations, truncations, infos = env.step(actions_dict)
                 dones = {agent: terminations[agent] or truncations[agent] for agent in env.agents}
-                frame = env.render()
-                frames.append(frame)
+
+                agent_positions = [agent.state.p_pos.copy() for agent in env.unwrapped.world.agents]
+                landmark_positions = [lm.state.p_pos.copy() for lm in env.unwrapped.world.landmarks]
+                data.append({
+                    "step": step,
+                    "agents": agent_positions,
+                    "landmarks": landmark_positions
+                })
+
+                # frame = env.render()
+                # frames.append(frame)
                 if len(env.agents) == 0 or all(dones.values()):
                     break
 
         # Save the gif to specified path
         gif_path = "./Animations/"
         os.makedirs(gif_path, exist_ok=True)
-        imageio.mimwrite(os.path.join(gif_path, "testAlgo.gif"), frames, duration=10)
+        render_static_frames(data)
+        # imageio.mimwrite(os.path.join(gif_path, "testAlgo.gif"), frames, duration=10)
+
 
     env.close()
