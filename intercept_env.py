@@ -315,25 +315,8 @@ class PursuitEvasionEnv(ParallelEnv):
 
         return obs
 
-    # -----------------------------------------------------
-    def render(self):
-        import matplotlib.pyplot as plt
-
-        plt.clf()
-        for idx, a in enumerate(self.agents):
-            if not self.active_array[self.agent_to_idx[a]]:
-                continue
-            color = "red" if "adversary" in a else "blue"
-            plt.scatter(self.pos_array[idx, 0], self.pos_array[idx, 1], c=color, s=100)
-        plt.xlim(-self.width_ratio, self.width_ratio)
-        plt.ylim(-1, 1)
-        plt.title("Intercept Environment")
-        plt.pause(0.01)
-
-
 def env(**kwargs):
     return PursuitEvasionEnv(**kwargs)
-
 
 if __name__ == '__main__':
     environment = env(N_adversaries=3, M_good=5, width_ratio=3.0)

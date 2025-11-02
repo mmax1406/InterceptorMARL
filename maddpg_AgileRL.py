@@ -2,8 +2,6 @@ import os
 import csv
 import numpy as np
 import torch
-import pandas as pd
-import seaborn as sns
 import matplotlib.pyplot as plt
 import imageio
 from agilerl.algorithms.maddpg import MADDPG
@@ -126,7 +124,6 @@ if __name__ == '__main__':
         num_episodes = 5_000
         print_every = 100
         best_reward = -999999
-        reward_list = []
         update_every = 100
         total_steps = 0
 
@@ -169,18 +166,21 @@ if __name__ == '__main__':
 
             total_reward = np.sum(ep_rewards)
             avg_agent_reward = np.mean(ep_rewards)
-            reward_list.append(total_reward)
+
+            # Evaluate model properly
+            fitness_mean, fitness_std = maddpg.test(env, max_steps=max_steps, loop=10)
 
             # --- Save best model ---
-            if total_reward > best_reward:
-                best_reward = total_reward
+            # if total_reward > best_reward:
+            if fitness_mean > best_reward:
+                best_reward = fitness_mean
                 maddpg.saveCheckpoint(save_dir)
                 print(f"[Episode {ep}] 🏆 New best model saved! Total reward: {best_reward:.2f}")
 
             # --- CSV logging ---
             with open(csv_path, "a", newline="") as f:
                 writer = csv.writer(f)
-                writer.writerow([ep, total_reward, avg_agent_reward])
+                writer.writerow([ep, total_reward, avg_agent_reward, fitness_mean, fitness_std])
 
             if ep % print_every == 0:
                 print(f"[Episode {ep}] Total: {total_reward:.2f}, Avg per agent: {avg_agent_reward:.2f}")

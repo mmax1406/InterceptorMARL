@@ -418,8 +418,8 @@ class MADDPG:
     def load(self, path_prefix: str):
         checkpoint = torch.load(f"{path_prefix}//AgentsAndActors.pt", map_location=self.device)
         for i, agent in enumerate(self.agents):
-            agent.actor.load_state_dict(torch.load(f"{path_prefix}//AgentsAndActors.pt", map_location=self.device))
-            agent.critic.load_state_dict(torch.load(f"{path_prefix}//AgentsAndActors.pt", map_location=self.device))
+            agent.actor.load_state_dict(checkpoint['actors'][i])
+            agent.critic.load_state_dict(checkpoint['critics'][i])
             agent.target_actor = copy.deepcopy(agent.actor)
             agent.target_critic = copy.deepcopy(agent.critic)
 
@@ -441,7 +441,7 @@ if __name__ == '__main__':
         raise ImportError("The 'some_library' is not installed. Please install it using 'pip install some_library'.")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    train, plot = True, True
+    train, plot = False, True
 
     # --- Initialize Environment ---
     env = simple_spread_v3.parallel_env(N=3, local_ratio=0.5, max_cycles=25, continuous_actions=True)

@@ -2,8 +2,6 @@ import os
 import csv
 import numpy as np
 import torch
-import pandas as pd
-import seaborn as sns
 import matplotlib.pyplot as plt
 import imageio
 from agilerl.algorithms.maddpg import MADDPG
@@ -72,6 +70,8 @@ if __name__ == '__main__':
         e = simple_spread_v3.parallel_env(N=num_agents, local_ratio=0.5, max_cycles=max_steps, continuous_actions=True)
         envs.append(e)
 
+    single_env = simple_spread_v3.parallel_env(N=num_agents, local_ratio=0.5, max_cycles=max_steps, continuous_actions=True) #For evaluation metric
+
     # Reset all envs and check agent list
     obs_list = [safe_reset(e) for e in envs]
     agent_ids = envs[0].agents[:]   # order should be same for all envs
@@ -130,7 +130,6 @@ if __name__ == '__main__':
         num_episodes = 5_000
         print_every = 100
         best_reward = -999999
-        reward_list = []
         update_every = 100    # perform learning once every X global steps (across envs)
         total_steps = 0
 
@@ -179,6 +178,9 @@ if __name__ == '__main__':
                     experiences = memory.sample(maddpg.batch_size)
                     maddpg.learn(experiences)
 
+            # Evaluate model properly
+            fitness_mean, fitness_std = maddpg.test(single_env, max_steps=max_steps, loop=10)
+
             # After running max_steps across NUM_ENVS, compute episode rewards
             # We summarize by summing across envs (treat each env as separate episode)
             total_rewards_each_env = ep_rewards_per_env.sum(axis=1)     # sum per env across agents
@@ -187,18 +189,18 @@ if __name__ == '__main__':
             # We'll log the mean across the NUM_ENVS batch to track progress
             mean_total_reward = float(total_rewards_each_env.mean())
             mean_avg_agent_reward = float(avg_agent_reward_each_env.mean())
-            reward_list.append(mean_total_reward)
 
             # Save best model (by mean_total_reward)
-            if mean_total_reward > best_reward:
-                best_reward = mean_total_reward
+            # if mean_total_reward > best_reward:
+            if fitness_mean > best_reward:
+                best_reward = fitness_mean
                 maddpg.saveCheckpoint(save_dir)
                 print(f"[Episode {ep}] 🏆 New best model saved! Mean total reward: {best_reward:.2f}")
 
             # CSV logging
             with open(csv_path, "a", newline="") as f:
                 writer = csv.writer(f)
-                writer.writerow([ep, mean_total_reward, mean_avg_agent_reward])
+                writer.writerow([ep, mean_total_reward, mean_avg_agent_reward, fitness_mean, fitness_std])
 
             if ep % print_every == 0:
                 print(f"[Episode {ep}] Mean Total: {mean_total_reward:.2f}, Mean per-agent: {mean_avg_agent_reward:.2f}")
