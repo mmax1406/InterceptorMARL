@@ -31,40 +31,6 @@ def fanin_init(tensor: torch.Tensor):
     bound = 1.0 / math.sqrt(fan_in)
     return tensor.data.uniform_(-bound, bound)
 
-def plotPrettyLog(data, window_size=20):
-    # Convert list to pandas Series
-    series = pd.Series(data)
-
-    # Compute rolling mean and std
-    rolling_mean = series.rolling(window_size).mean()
-    rolling_std = series.rolling(window_size).std()
-
-    # X-axis: episode indices
-    episodes = np.arange(len(data))
-
-    # --- Plot ---
-    plt.figure(figsize=(10, 6))
-    sns.set_theme(style="whitegrid")
-
-    # Plot raw data (optional)
-    sns.lineplot(x=episodes, y=data, color='lightgray', alpha=0.4, label='Raw Rewards')
-
-    # Plot rolling mean
-    sns.lineplot(x=episodes, y=rolling_mean, color='blue', label=f'Mean (window={window_size})')
-
-    # Shaded region for ±1 std
-    plt.fill_between(episodes, rolling_mean - rolling_std, rolling_mean + rolling_std,
-                     color='blue', alpha=0.2, label='±1 Std. Dev.')
-
-    plt.title("Reward Progress with Sliding Window")
-    plt.xlabel("Episode")
-    plt.ylabel("Reward")
-    plt.legend()
-    plt.tight_layout()
-    plt.grid(True)
-    plt.show(block=False)
-    plt.savefig('training_reward.png')
-
 def render_static_frames(data, save_path="./Animations/testAlgo.gif"):
     """Render all recorded positions with a fixed camera."""
     frames = []
@@ -254,8 +220,7 @@ class Agent:
         self.actor.train()
         if explore and noise is not None:
             action = action + noise
-        action = rescale_action(np.clip(action, -1.0, 1.0), 0, 1.0) #Change to be dynamic
-        return action
+        return np.clip(action, -1.0, 1.0)
 
 class MADDPG:
     def __init__(self, n_agents: int, obs_dims: List[int], action_dims: List[int], args: dict = None):
@@ -441,14 +406,20 @@ class MADDPG:
         self.updates_done += 1
 
     def save(self, path_prefix: str):
-        for i, agent in enumerate(self.agents):
-            torch.save(agent.actor.state_dict(), f"{path_prefix}//agent{i}_actor.pth")
-            torch.save(agent.critic.state_dict(), f"{path_prefix}//agent{i}_critic.pth")
+        torch.save({
+            "actors": [
+                agent.actor.state_dict() for agent in self.agents
+            ],
+            "critics": [
+                agent.critic.state_dict() for agent in self.agents
+            ]
+        }, f"{path_prefix}//AgentsAndActors.pt")
 
     def load(self, path_prefix: str):
+        checkpoint = torch.load(f"{path_prefix}//AgentsAndActors.pt", map_location=self.device)
         for i, agent in enumerate(self.agents):
-            agent.actor.load_state_dict(torch.load(f"{path_prefix}//agent{i}_actor.pth", map_location=self.device))
-            agent.critic.load_state_dict(torch.load(f"{path_prefix}//agent{i}_critic.pth", map_location=self.device))
+            agent.actor.load_state_dict(torch.load(f"{path_prefix}//AgentsAndActors.pt", map_location=self.device))
+            agent.critic.load_state_dict(torch.load(f"{path_prefix}//AgentsAndActors.pt", map_location=self.device))
             agent.target_actor = copy.deepcopy(agent.actor)
             agent.target_critic = copy.deepcopy(agent.critic)
 
@@ -470,7 +441,7 @@ if __name__ == '__main__':
         raise ImportError("The 'some_library' is not installed. Please install it using 'pip install some_library'.")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    train, plot = False, True
+    train, plot = True, True
 
     # --- Initialize Environment ---
     env = simple_spread_v3.parallel_env(N=3, local_ratio=0.5, max_cycles=25, continuous_actions=True)
@@ -494,7 +465,7 @@ if __name__ == '__main__':
     )
 
     maddpg = MADDPG(n_agents=num_agents, obs_dims=obs_dims, action_dims=action_dims, args=args)
-    max_steps = 50
+    max_steps = 25
     save_dir = "checkpoints"
 
     if train:
@@ -507,7 +478,7 @@ if __name__ == '__main__':
             writer.writerow(["episode", "total_reward", "avg_agent_reward"])
 
         # --- Training loop ---
-        num_episodes = 200_000
+        num_episodes = 5_000
         print_every = 100
         best_reward = -999999
         reward_list = []
@@ -520,20 +491,29 @@ if __name__ == '__main__':
             for step in range(max_steps):
                 obs_list = [obs[agent] for agent in env.agents]
                 actions = maddpg.act(obs_list, explore=True)
-                actions_dict = {agent: actions[i].astype(np.float32) for i, agent in enumerate(env.agents)}
+
+                actions_dict = {agent: rescale_action(actions[i].astype(np.float32), 0, 1.0) for i, agent in enumerate(env.agents)}
 
                 next_obs, rewards, terminations, truncations, infos = env.step(actions_dict)
-                dones = {agent: terminations[agent] or truncations[agent] for agent in env.agents}
-                next_obs_list = [next_obs[agent] for agent in env.agents]
-                rewards_list = [rewards.get(agent, 0) for agent in env.agents]
-                dones_list = [dones[agent] for agent in env.agents]
 
-                maddpg.step(obs_list, actions, rewards_list, next_obs_list, dones_list)
-                obs = next_obs
-                ep_rewards += np.array(rewards_list)
-
-                if all(dones_list) or env.agents:
+                # Stop if environment has no active agents
+                if not env.agents:
                     break
+
+                dones = {a: terminations[a] or truncations[a] for a in env.agents}
+                next_obs_list = [next_obs[a] for a in env.agents]
+                rewards_list = [rewards.get(a, 0.0) for a in env.agents]
+                dones_list = [dones[a] for a in env.agents]
+
+                # Store transition before checking for termination
+                maddpg.step(obs_list, actions, rewards_list, next_obs_list, dones_list)
+
+                ep_rewards += np.array(rewards_list)
+                obs = next_obs
+
+                if all(dones.values()):
+                    break
+
 
             total_reward = np.sum(ep_rewards)
             avg_agent_reward = np.mean(ep_rewards)
@@ -554,7 +534,6 @@ if __name__ == '__main__':
             if ep % print_every == 0:
                 print(f"[Episode {ep}] Total: {total_reward:.2f}, Avg per agent: {avg_agent_reward:.2f}")
 
-        plotPrettyLog(reward_list)
         print("Training finished ✅")
 
     env = simple_spread_v3.parallel_env(N=3, local_ratio=0.5, max_cycles=max_steps, continuous_actions=True, render_mode="rgb_array")

@@ -11,28 +11,6 @@ from agilerl.components.multi_agent_replay_buffer import MultiAgentReplayBuffer
 
 # ------------------------ Utilities ------------------------
 
-def plotPrettyLog(data, window_size=20):
-    """Plot training rewards with rolling mean and std."""
-    series = pd.Series(data)
-    rolling_mean = series.rolling(window_size).mean()
-    rolling_std = series.rolling(window_size).std()
-    episodes = np.arange(len(data))
-
-    plt.figure(figsize=(10, 6))
-    sns.set_theme(style="whitegrid")
-    sns.lineplot(x=episodes, y=data, color='lightgray', alpha=0.4, label='Raw Rewards')
-    sns.lineplot(x=episodes, y=rolling_mean, color='blue', label=f'Mean (window={window_size})')
-    plt.fill_between(episodes, rolling_mean - rolling_std, rolling_mean + rolling_std,
-                     color='blue', alpha=0.2, label='±1 Std. Dev.')
-    plt.title("Reward Progress with Sliding Window")
-    plt.xlabel("Episode")
-    plt.ylabel("Reward")
-    plt.legend()
-    plt.tight_layout()
-    plt.grid(True)
-    plt.savefig('training_reward_agileRL.png')
-    plt.show(block=False)
-
 def render_static_frames(data, save_path="./Animations/testAlgo_AgileRL.gif"):
     """Render all recorded positions with a fixed camera."""
     frames = []
@@ -74,7 +52,7 @@ if __name__ == '__main__':
         raise ImportError("PettingZoo is not installed. Install with: pip install pettingzoo")
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    train, plot = False, True
+    train, plot = True, True
 
     # --- Initialize Environment ---
     max_steps = 25
@@ -132,20 +110,20 @@ if __name__ == '__main__':
         device=device,
     )
 
-    save_dir = "checkpoints_agilerl/test.pt"
+    save_dir = "checkpoints/Weights.pt"
     # os.makedirs(save_dir, exist_ok=True)
 
     if train:
         # --- Logging setup ---
-        log_dir = "logs_agilerl"
+        log_dir = "logs"
         os.makedirs(log_dir, exist_ok=True)
-        csv_path = os.path.join(log_dir, "training_log.csv")
+        csv_path = os.path.join(log_dir, "training_log_agileRL.csv")
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["episode", "total_reward", "avg_agent_reward"])
 
         # --- Training loop ---
-        num_episodes = 200_000
+        num_episodes = 5_000
         print_every = 100
         best_reward = -999999
         reward_list = []
@@ -164,7 +142,7 @@ if __name__ == '__main__':
                 obs_dict = {agent_id: obs[agent_id] for agent_id in agent_ids}
 
                 # Get continuous actions with exploration noise
-                cont_actions, raw_action =  maddpg.getAction(obs_dict, epsilon=1.0)
+                cont_actions, raw_action =  maddpg.getAction(obs_dict, epsilon=0.5)
 
                 # Execute actions in environment
                 actions_dict = {agent_id: cont_actions[agent_id] for agent_id in agent_ids}
@@ -207,7 +185,6 @@ if __name__ == '__main__':
             if ep % print_every == 0:
                 print(f"[Episode {ep}] Total: {total_reward:.2f}, Avg per agent: {avg_agent_reward:.2f}")
 
-        plotPrettyLog(reward_list)
         print("Training finished ✅")
 
     # --- Evaluation/Visualization ---
@@ -229,7 +206,7 @@ if __name__ == '__main__':
                 obs_dict = {agent_id: obs[agent_id] for agent_id in agent_ids}
 
                 # Get actions without exploration noise
-                cont_actions, raw_action =  maddpg.getAction(obs_dict, epsilon=1.0)
+                cont_actions, raw_action =  maddpg.getAction(obs_dict, epsilon=0.0)
 
                 actions_dict = {agent_id: cont_actions[agent_id] for agent_id in agent_ids}
                 next_obs, rewards, terminations, truncations, infos = env.step(actions_dict)
