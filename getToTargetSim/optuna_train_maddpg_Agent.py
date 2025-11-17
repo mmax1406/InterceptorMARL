@@ -34,8 +34,8 @@ def get_expl_noise(episode, total_episodes, start=0.5, end=0.05, decay_fraction=
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # --- Multi-env (vectorized) settings ---
-NUM_ENVS = 4                     
-max_steps = 200
+NUM_ENVS = 32                     
+max_steps = 50
 num_agents = 3                   
 envs = []
 for i in range(NUM_ENVS):

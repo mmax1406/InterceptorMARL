@@ -72,7 +72,7 @@ if __name__ == '__main__':
     envs = []
 
     # Training params
-    num_episodes = 10_000
+    num_episodes = 500
     print_every = 100
     best_reward = -999999
     update_every = 50    # perform learning once every X global steps (across envs)

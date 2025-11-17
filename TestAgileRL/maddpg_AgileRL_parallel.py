@@ -62,7 +62,7 @@ if __name__ == '__main__':
     train, plot = True, True
 
     # --- Multi-env (vectorized) settings ---
-    NUM_ENVS = 8                     # <<-- number of parallel environments (instances)
+    NUM_ENVS = 32                     # <<-- number of parallel environments (instances)
     max_steps = 25
     num_agents = 3                   # keep consistent with env N=3 below
     envs = []

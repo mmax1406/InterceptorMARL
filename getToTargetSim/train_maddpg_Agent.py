@@ -9,6 +9,7 @@ from datetime import datetime
 import sim_spread
 from tqdm import tqdm
 import burnin_policy
+from copy import copy
 
 # ------------------------ Helpers ------------------------
 
@@ -20,7 +21,7 @@ def safe_reset(env):
         return out[0]
     return out
 
-def get_expl_noise(episode, total_episodes, start=0.5, end=0.02, decay_fraction=0.8):
+def get_expl_noise(episode, total_episodes, start=0.3, end=0.02, decay_fraction=0.8):
     decay_episodes = int(total_episodes * decay_fraction)
     if episode >= decay_episodes:
         return end
@@ -35,15 +36,16 @@ if __name__ == '__main__':
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     # --- Multi-env (vectorized) settings ---
-    NUM_ENVS = 4                     
-    max_steps = 200
+    NUM_ENVS = 32                     
+    max_steps = 50
     num_agents = 3                   
     envs = []
+    max_vel = 0.1
     for i in range(NUM_ENVS):
-        e = sim_spread.MultiAgentTargetEnv( n_agents=num_agents, n_targets=num_agents, max_steps=max_steps, max_velocity=0.5,apply_disturbances=False)
+        e = sim_spread.MultiAgentTargetEnv( n_agents=num_agents, n_targets=num_agents, max_steps=max_steps, max_velocity=max_vel, apply_disturbances=False)
         envs.append(e)
 
-    single_env = sim_spread.MultiAgentTargetEnv( n_agents=num_agents, n_targets=num_agents, max_steps=max_steps, max_velocity=0.5,apply_disturbances=False)
+    single_env = copy(envs[0])
 
     # Reset all envs and check agent list
     obs_list = [safe_reset(e) for e in envs]
@@ -58,12 +60,13 @@ if __name__ == '__main__':
     max_action = envs[0].action_space(agent_ids[0]).high[0]
 
     # Training values
-    num_episodes = 300
-    print_every = 50
+    num_episodes = 2_000
+    plot_every = 20
     best_reward = -999999
     update_every = 50    # perform learning once every X global steps (across envs)
     total_steps = 0
     saveAnimation = 50
+    noise = max_vel/10
 
     # --- Initialize AgileRL MADDPG --- 
     maddpg = MADDPG(
@@ -77,14 +80,14 @@ if __name__ == '__main__':
         discrete_actions=discrete_actions,
         net_config={
             'arch': 'mlp',
-            'h_size': [256, 256]
+            'h_size': [128, 128]
         },
         batch_size=512,
-        lr_actor=0.001,
-        lr_critic=0.001,
+        lr_actor=0.0005,
+        lr_critic=0.0005,
         gamma=0.97,
         tau=0.017,
-        expl_noise=0.5,
+        expl_noise=noise,
         device=device,
     )
 
@@ -113,41 +116,6 @@ if __name__ == '__main__':
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["episode", "total_reward", "avg_agent_reward"])
-    
-
-    ## Slow brun The learning
-    # my_burnin_policy = burnin_policy.ProportionalPolicy(single_env)
-    # for _ in range(10):
-        # obs_list = [safe_reset(e) for e in envs]
-        # for step in range(max_steps):
-        #     for env_idx, env in enumerate(envs):
-        #         total_steps += 1
-        #         obs = obs_list[env_idx]
-
-        #         # Build obs dict expected by MADDPG
-        #         obs_dict = {agent_id: obs[agent_id] for agent_id in agent_ids}
-
-        #         # getAction returns continuous actions dict for this environment
-        #         cont_actions, raw_action = my_burnin_policy.getAction(obs_dict)
-        #         actions_dict = {agent_id: cont_actions[agent_id] for agent_id in agent_ids}
-        #         next_obs, rewards, terminations, truncations, infos = env.step(actions_dict)
-
-        #         # Compute dones (per-agent)
-        #         dones = {agent: terminations[agent] or truncations[agent] for agent in agent_ids}
-
-        #         # Step the environment
-        #         next_obs, rewards, terminations, truncations, infos = env.step(actions_dict)
-        #         dones = {agent: terminations[agent] or truncations[agent] for agent in agent_ids}
-        #         memory.save2memory(obs, actions_dict, rewards, next_obs, dones)
-
-        #         # If env finished all agents, we could early-reset it (optional)
-        #         if all(dones.values()) or len(env.agents) == 0:
-        #             # reset this env early so it continues producing data for next steps
-        #             obs_list[env_idx] = safe_reset(env)
-
-        #         # update local obs
-        #         obs_list[env_idx] = next_obs
-
 
     # Run the RL learning
     for ep in range(1, num_episodes + 1):
@@ -197,7 +165,7 @@ if __name__ == '__main__':
                 maddpg.learn(experiences)
 
         # Evaluate model properly
-        fitness_mean, fitness_std = maddpg.test(single_env, max_steps=max_steps, loop=10)
+        fitness_mean, fitness_std = maddpg.test(single_env, max_steps=max_steps, loop=20)
 
         # After running max_steps across NUM_ENVS, compute episode rewards
         # We summarize by summing across envs (treat each env as separate episode)
@@ -213,8 +181,6 @@ if __name__ == '__main__':
         if fitness_mean > best_reward:
             best_reward = fitness_mean
             maddpg.saveCheckpoint(save_dir)
-            if ep > saveAnimation or ep ==num_episodes:
-                single_env.save_animation(maddpg, f"maddpg_training_{timestamp}")
             print(f"[Episode {ep}] New best model saved! Mean total reward: {best_reward:.2f}")
 
         # CSV logging
@@ -222,11 +188,12 @@ if __name__ == '__main__':
             writer = csv.writer(f)
             writer.writerow([ep, mean_total_reward, mean_avg_agent_reward, fitness_mean, fitness_std])
 
-        # if ep % print_every == 0:
+        if ep % plot_every == 0:
+            single_env.save_animation(maddpg, f"maddpg_training_{timestamp}")
         print(f"[Episode {ep}] Mean evaluation: {fitness_mean:.2f}, Std evaluation: {fitness_std:.2f}")
 
         # Exploration decay
-        maddpg.expl_noise = get_expl_noise(ep, num_episodes)
+        # maddpg.expl_noise = get_expl_noise(ep, num_episodes, start=noise)
 
     print("Training finished")
 

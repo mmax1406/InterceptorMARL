@@ -18,35 +18,35 @@ class CustomSpreadEnv:
         return cls(*args, **kwargs)
 
 
-    # ---------- RESET ----------
-    def reset(self, seed=None, options=None):
-        obs = self.env.reset(seed=seed, options=options)
+    # # ---------- RESET ----------
+    # def reset(self, seed=None, options=None):
+    #     obs = self.env.reset(seed=seed, options=options)
 
-        world = self.env.unwrapped.world
+    #     world = self.env.unwrapped.world
 
-        # --- Modify map bounds ---
-        if hasattr(world, "bounds"):
-            world.bounds = [-self.map_size, self.map_size]
+    #     # --- Modify map bounds ---
+    #     if hasattr(world, "bounds"):
+    #         world.bounds = [-self.map_size, self.map_size]
 
-        # --- Spawn agents on the left ---
-        n_agents = len(world.agents)
-        left_x = -self.map_size + self.eps
+    #     # --- Spawn agents on the left ---
+    #     n_agents = len(world.agents)
+    #     left_x = -self.map_size + self.eps
 
-        # Spread Y positions uniformly across map height
-        ys = np.linspace(-self.map_size * 0.8, self.map_size * 0.8, n_agents)
+    #     # Spread Y positions uniformly across map height
+    #     ys = np.linspace(-self.map_size * 0.8, self.map_size * 0.8, n_agents)
 
-        for agent, y in zip(world.agents, ys):
-            agent.state.p_pos = np.array([left_x, y], dtype=np.float32)
-            agent.state.p_vel = np.zeros(2, dtype=np.float32)
+    #     for agent, y in zip(world.agents, ys):
+    #         agent.state.p_pos = np.array([left_x, y], dtype=np.float32)
+    #         agent.state.p_vel = np.zeros(2, dtype=np.float32)
 
-        # --- Spawn targets/landmarks on the right ---
-        for landmark in world.landmarks:
-            x = np.random.uniform(0.0 + self.eps, self.map_size)
-            y = np.random.uniform(-self.map_size, self.map_size)
-            landmark.state.p_pos = np.array([x, y], dtype=np.float32)
-            landmark.state.p_vel = np.zeros(2, dtype=np.float32)
+    #     # --- Spawn targets/landmarks on the right ---
+    #     for landmark in world.landmarks:
+    #         x = np.random.uniform(0.0 + self.eps, self.map_size)
+    #         y = np.random.uniform(-self.map_size, self.map_size)
+    #         landmark.state.p_pos = np.array([x, y], dtype=np.float32)
+    #         landmark.state.p_vel = np.zeros(2, dtype=np.float32)
 
-        return obs
+    #     return obs
 
     # ---------- STEP ----------
     def step(self, action_dict):

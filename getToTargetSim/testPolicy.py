@@ -70,7 +70,7 @@ def load_maddpg_agent(checkpoint_path, env, device):
         discrete_actions=False,
         net_config={
             'arch': 'mlp',
-            'h_size': [256, 256]
+            'h_size': [64, 64]
         },
         batch_size=512,
         lr_actor=0.001,
@@ -104,7 +104,6 @@ if __name__ == '__main__':
         except FileNotFoundError as e:
             print(f"Error: {e}")
             print("Please set AUTO_FIND_LATEST=False and specify MANUAL_CHECKPOINT_PATH")
-            exit(1)
     
     # Create environment
     env = sim_spread.MultiAgentTargetEnv(
@@ -118,6 +117,19 @@ if __name__ == '__main__':
     # Load agent
     policy = load_maddpg_agent(checkpoint_path, env, DEVICE)
     # policy = burnin_policy.ProportionalPolicy(env, K=0.1)
+
+    for _ in range(20):
+        obs, _ = env.reset()
+        totalReward = 0
+        for _ in range(50):
+            with torch.no_grad():
+                cont_actions, raw_action = policy.getAction(obs)
+                actions_dict = {agent_id: cont_actions[agent_id] for agent_id in env.agents}
+                obs, rewards, terminations, truncations, infos = env.step(actions_dict)
+                totalReward += sum(rewards.values()) / len(rewards)
+                if all(terminations.values()):
+                    break
+        print(totalReward)           
 
     animation_path = env.save_animation(policy, filename=ANIMATION_FILENAME)
     

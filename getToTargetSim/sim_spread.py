@@ -12,8 +12,8 @@ class MultiAgentTargetEnv(gym.Env):
     def __init__(self,
                  n_agents: int = 3,
                  n_targets: int = 3,
-                 world_size_x: float = 20.0,
-                 world_size_y: float = 10.0,
+                 world_size_x: float = 5.0,
+                 world_size_y: float = 3.0,
                  max_velocity: float = 0.5,
                  agent_radius: float = 0.2,
                  target_radius: float = 0.3,
@@ -100,20 +100,33 @@ class MultiAgentTargetEnv(gym.Env):
 
     def _initialize_positions(self):
         """Optimized position initialization with pre-allocated arrays"""
-        # Initialize agents
+        # # Initialize agents
+        # for i in range(self.n_agents):
+        #     max_attempts = 100
+        #     for _ in range(max_attempts):
+        #         pos = np.random.uniform([self.agent_radius, self.agent_radius], 
+        #                               [0.1 + self.agent_radius, self.world_size_y - self.agent_radius]).astype(np.float32)
+        #         if i == 0:
+        #             self.agent_positions[0] = pos
+        #             break
+        #         # Vectorized distance check
+        #         dist_sq = np.sum((self.agent_positions[:i] - pos) ** 2, axis=1)
+        #         if np.all(dist_sq > (2 * self.agent_radius) ** 2):
+        #             self.agent_positions[i] = pos
+        #             break
+
+        #equally spaced along Y-axis
+        y_min = self.agent_radius
+        y_max = self.world_size_y - self.agent_radius
+
+        # Compute equally spaced Y positions
+        y_positions = np.linspace(y_min, y_max, self.n_agents)
+
+        # Assign positions (keep X small or at a fixed value)
+        x_pos = 0.05 + self.agent_radius  # or any small X start
         for i in range(self.n_agents):
-            max_attempts = 100
-            for _ in range(max_attempts):
-                pos = np.random.uniform([self.agent_radius, self.agent_radius], 
-                                      [0.1 + self.agent_radius, self.world_size_y - self.agent_radius]).astype(np.float32)
-                if i == 0:
-                    self.agent_positions[0] = pos
-                    break
-                # Vectorized distance check
-                dist_sq = np.sum((self.agent_positions[:i] - pos) ** 2, axis=1)
-                if np.all(dist_sq > (2 * self.agent_radius) ** 2):
-                    self.agent_positions[i] = pos
-                    break
+            self.agent_positions[i] = np.array([x_pos, y_positions[i]], dtype=np.float32)
+
 
         # Initialize targets
         for i in range(self.n_targets):
@@ -183,7 +196,7 @@ class MultiAgentTargetEnv(gym.Env):
             self.agent_positions += self.agent_velocities
         
         # Vectorized boundary clipping
-        np.clip(self.agent_positions, self.pos_min, self.pos_max, out=self.agent_positions)
+        # np.clip(self.agent_positions, self.pos_min, self.pos_max, out=self.agent_positions)
         
         # Calculate rewards
         self._calculate_reward_fast()       
@@ -228,24 +241,24 @@ class MultiAgentTargetEnv(gym.Env):
         np.sqrt(np.sum(self._diff_targets ** 2, axis=2), out=self._dist_targets)
         
         # Normalize and clip distances
-        self._dist_targets *= self.inv_max_distance
-        np.clip(self._dist_targets, 0.0, 1.0, out=self._dist_targets)
+        # self._dist_targets *= self.inv_max_distance
+        # np.clip(self._dist_targets, 0.0, 1.0, out=self._dist_targets)
 
         # Distance-based rewards (vectorized sum)
-        np.sum(self._dist_targets, axis=1, out=self._rewards)
+        np.min(self._dist_targets, axis=1, out=self._rewards)
         self._rewards *= -1
         
         # Collision penalties using squared distances (faster than sqrt)
         np.less(self._dist_agents_sq, self.collision_threshold_sq, out=self._collision_mask)
         np.fill_diagonal(self._collision_mask, False)
         collision_counts = np.sum(self._collision_mask, axis=1)
-        self._rewards -= collision_counts * 10
+        self._rewards -= collision_counts * 1
         
         self._rewards -= 0.01
 
         # Completion bonus
         if self.targets_reached.all():
-            self._rewards += self.n_agents * 3
+            self._rewards += 1
 
     def _get_info(self):
         """Return info dictionary with minimal copying"""
@@ -332,8 +345,6 @@ class MultiAgentTargetEnv(gym.Env):
                 actions_dict = {agent_id: cont_actions[agent_id] for agent_id in self.agents}
 
                 obs, rewards, terminations, truncations, infos = self.step(actions_dict)
-                if np.average(self._rewards)>0:
-                    print('No good')
 
             if all(terminations.values()) or all(truncations.values()):
                 frames.extend([frames[-1]] * 10)
